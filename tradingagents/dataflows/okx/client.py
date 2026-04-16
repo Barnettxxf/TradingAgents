@@ -1,7 +1,5 @@
-from typing import Annotated
-import datetime
 from sqlalchemy import text
-from .market_data import engine
+from .market_data import engine as _default_engine
 
 SYMBOL_MAP = {
     "ETH-USD": "ETH-USDT-SWAP",
@@ -14,10 +12,13 @@ def normalize_symbol(symbol: str) -> str | None:
 
 
 class OKXDataStore:
-    def __init__(self):
-        self.engine = engine
+    """Thin wrapper around the OKX PostgreSQL datastore."""
+
+    def __init__(self, engine=None):
+        self.engine = engine if engine is not None else _default_engine
 
     def has_symbol(self, symbol: str) -> bool:
+        """Return True if the normalized symbol exists in the kline table."""
         okx_symbol = normalize_symbol(symbol)
         if not okx_symbol:
             return False
