@@ -181,7 +181,9 @@ def _extract_indicator_value(row, indicator: str):
         return str(val) if val is not None else "N/A"
     if indicator == "close_10_ema":
         emas = row.emas or {}
-        val = emas.get("E10") or emas.get("E5")
+        val = emas.get("E10")
+        if val is None:
+            val = emas.get("E5")
         return str(val) if val is not None else "N/A"
 
     return None
@@ -198,8 +200,9 @@ def get_okx_indicators(
         return f"OKX does not have data for {symbol}."
 
     if indicator not in _INDICATOR_DESCS:
-        raise ValueError(
-            f"Indicator {indicator} is not supported. Please choose from: {list(_INDICATOR_DESCS.keys())}"
+        return (
+            f"Indicator {indicator} is not supported. Please choose from: "
+            f"{list(_INDICATOR_DESCS.keys())}"
         )
 
     curr_date_dt = datetime.datetime.strptime(curr_date, "%Y-%m-%d")
@@ -210,7 +213,8 @@ def get_okx_indicators(
         return f"OKX does not have data for {symbol}."
 
     with store.engine.connect() as conn:
-        # Resample: pick the latest record per calendar day for 1D timeframe
+        # DISTINCT ON is required because multiple indicator calculations may
+        # exist per calendar day; we want the latest one for each day.
         result = conn.execute(
             text("""
                 SELECT DISTINCT ON (DATE(report_time))
@@ -220,7 +224,7 @@ def get_okx_indicators(
                     macd_dea,
                     macd_hist,
                     atr,
-                    bolling_bands,
+                    bolling_bands,  -- matches the DB schema spelling
                     emas
                 FROM market_indicator_history
                 WHERE symbol = :sym
@@ -237,16 +241,14 @@ def get_okx_indicators(
         )
         rows = result.fetchall()
 
+    rows_by_date = {r.report_time.strftime("%Y-%m-%d"): r for r in rows}
+
     # Build daily index from before..curr_date inclusive
     ind_string = ""
     current_dt = curr_date_dt
     while current_dt >= before:
         date_str = current_dt.strftime("%Y-%m-%d")
-        row_for_date = None
-        for row in rows:
-            if row.report_time.strftime("%Y-%m-%d") == date_str:
-                row_for_date = row
-                break
+        row_for_date = rows_by_date.get(date_str)
 
         if row_for_date:
             val = _extract_indicator_value(row_for_date, indicator)
