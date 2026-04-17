@@ -1,6 +1,7 @@
 import datetime
 from typing import Annotated
 
+import pandas as pd
 from sqlalchemy import text
 from .market_data import engine as _default_engine
 
@@ -189,6 +190,48 @@ def _extract_indicator_value(row, indicator: str):
     return None
 
 
+def _compute_sma_from_kline(engine, okx_symbol: str, period: int, end_date: datetime.date) -> dict[str, str]:
+    """Compute SMA from KLine close prices and return {date_str: sma_value_str}."""
+    # Need enough history: period days before the earliest possible query date.
+    # Caller passes end_date (curr_date). We fetch from (end_date - period * 2) to be safe,
+    # but at minimum we need period rows before end_date.
+    start_dt = end_date - datetime.timedelta(days=period * 2)
+    end_dt = end_date + datetime.timedelta(days=1)
+
+    with engine.connect() as conn:
+        result = conn.execute(
+            text("""
+                SELECT report_time, close
+                FROM kline
+                WHERE symbol = :sym
+                  AND timeframe = '1D'
+                  AND report_time >= :start
+                  AND report_time < :end
+                ORDER BY report_time
+            """),
+            {
+                "sym": okx_symbol,
+                "start": start_dt.strftime("%Y-%m-%d"),
+                "end": end_dt.strftime("%Y-%m-%d"),
+            },
+        )
+        rows = result.fetchall()
+
+    if not rows:
+        return {}
+
+    df = pd.DataFrame(
+        [(r.report_time.strftime("%Y-%m-%d"), float(r.close)) for r in rows],
+        columns=["date", "close"],
+    )
+    df["sma"] = df["close"].rolling(window=period, min_periods=period).mean()
+
+    return {
+        row["date"]: (f"{row['sma']:.2f}" if pd.notna(row["sma"]) else "N/A")
+        for _, row in df.iterrows()
+    }
+
+
 def get_okx_indicators(
     symbol: Annotated[str, "ticker symbol of the company"],
     indicator: Annotated[str, "technical indicator to get the analysis and report of"],
@@ -211,6 +254,14 @@ def get_okx_indicators(
     store = OKXDataStore()
     if not store.has_symbol(symbol):
         return f"OKX does not have data for {symbol}."
+
+    # Pre-compute SMA values from KLine when needed
+    sma_by_date = {}
+    if indicator in ("close_50_sma", "close_200_sma"):
+        period = 50 if indicator == "close_50_sma" else 200
+        sma_by_date = _compute_sma_from_kline(
+            store.engine, okx_symbol, period, curr_date_dt.date()
+        )
 
     with store.engine.connect() as conn:
         # DISTINCT ON is required because multiple indicator calculations may
@@ -248,14 +299,17 @@ def get_okx_indicators(
     current_dt = curr_date_dt
     while current_dt >= before:
         date_str = current_dt.strftime("%Y-%m-%d")
-        row_for_date = rows_by_date.get(date_str)
 
-        if row_for_date:
-            val = _extract_indicator_value(row_for_date, indicator)
-            if val is None:
-                val = f"N/A: Indicator {indicator} is not available from OKX data."
+        if indicator in ("close_50_sma", "close_200_sma"):
+            val = sma_by_date.get(date_str, "N/A: Not a trading day (weekend or holiday)")
         else:
-            val = "N/A: Not a trading day (weekend or holiday)"
+            row_for_date = rows_by_date.get(date_str)
+            if row_for_date:
+                val = _extract_indicator_value(row_for_date, indicator)
+                if val is None:
+                    val = f"N/A: Indicator {indicator} is not available from OKX data."
+            else:
+                val = "N/A: Not a trading day (weekend or holiday)"
 
         ind_string += f"{date_str}: {val}\n"
         current_dt -= datetime.timedelta(days=1)

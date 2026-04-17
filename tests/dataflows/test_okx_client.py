@@ -48,3 +48,15 @@ def test_get_okx_indicators_no_duplicate_days():
             date_part = line.split(":")[0]
             dates.append(date_part)
     assert len(dates) == len(set(dates))
+
+
+def test_get_okx_indicators_sma_computed_from_kline():
+    result = get_okx_indicators("ETH-USD", "close_50_sma", "2026-04-16", 3)
+    assert "close_50_sma values" in result.lower()
+    assert "2026-04-16" in result
+    # Values should be numeric, not N/A
+    for line in result.splitlines():
+        if line.startswith("2026-"):
+            value = line.split(":")[1].strip()
+            assert value != "N/A"
+            assert float(value) > 0
