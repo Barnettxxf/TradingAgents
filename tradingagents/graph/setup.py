@@ -37,6 +37,7 @@ class GraphSetup:
         self.portfolio_manager_memory = portfolio_manager_memory
         self.conditional_logic = conditional_logic
 
+
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals"]
     ):

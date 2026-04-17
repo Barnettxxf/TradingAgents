@@ -1,7 +1,7 @@
 from typing import Optional
 
 from .base_client import BaseLLMClient
-from .openai_client import OpenAIClient
+from .openai_client import OpenAIClient, DeepSeekClient
 from .anthropic_client import AnthropicClient
 from .google_client import GoogleClient
 
@@ -45,5 +45,8 @@ def create_llm_client(
 
     if provider_lower == "google":
         return GoogleClient(model, base_url, **kwargs)
+    
+    if provider_lower == "deepseek":
+        return DeepSeekClient(model, provider="deepseek", **kwargs)
 
     raise ValueError(f"Unsupported LLM provider: {provider}")

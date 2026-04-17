@@ -2,6 +2,7 @@ import os
 from typing import Any, Optional
 
 from langchain_openai import ChatOpenAI
+from langchain_deepseek import ChatDeepSeek
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
@@ -18,6 +19,17 @@ class NormalizedChatOpenAI(ChatOpenAI):
     def invoke(self, input, config=None, **kwargs):
         return normalize_content(super().invoke(input, config, **kwargs))
 
+class NormalizedChatDeepSeekAI(ChatDeepSeek):
+    """ChatOpenAI with normalized content output.
+
+    The Responses API returns content as a list of typed blocks
+    (reasoning, text, etc.). This normalizes to string for consistent
+    downstream handling.
+    """
+
+    def invoke(self, input, config=None, **kwargs):
+        return normalize_content(super().invoke(input, config, **kwargs))
+    
 # Kwargs forwarded from user config to ChatOpenAI
 _PASSTHROUGH_KWARGS = (
     "timeout", "max_retries", "reasoning_effort",
@@ -83,3 +95,18 @@ class OpenAIClient(BaseLLMClient):
     def validate_model(self) -> bool:
         """Validate model for the provider."""
         return validate_model(self.provider, self.model)
+
+class DeepSeekClient(OpenAIClient):
+    def get_llm(self) -> Any:
+        """Return configured ChatOpenAI instance."""
+        llm_kwargs = {"model": self.model}
+
+        # Forward user-provided kwargs
+        for key in _PASSTHROUGH_KWARGS:
+            if key in self.kwargs:
+                llm_kwargs[key] = self.kwargs[key]
+
+        return NormalizedChatDeepSeekAI(**llm_kwargs)
+    
+    def validate_model(self):
+        return True
