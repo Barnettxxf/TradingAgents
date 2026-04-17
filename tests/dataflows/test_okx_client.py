@@ -60,3 +60,15 @@ def test_get_okx_indicators_sma_computed_from_kline():
             value = line.split(":")[1].strip()
             assert value != "N/A"
             assert float(value) > 0
+
+
+def test_get_okx_indicators_vwma_computed_from_kline():
+    result = get_okx_indicators("ETH-USD", "vwma", "2026-04-16", 3)
+    assert "vwma values" in result.lower()
+    assert "2026-04-16" in result
+    # Values should be numeric, not N/A
+    for line in result.splitlines():
+        if line.startswith("2026-"):
+            value = line.split(":")[1].strip()
+            assert value != "N/A"
+            assert float(value) > 0

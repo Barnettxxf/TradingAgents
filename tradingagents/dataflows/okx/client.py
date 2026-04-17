@@ -232,6 +232,54 @@ def _compute_sma_from_kline(engine, okx_symbol: str, period: int, end_date: date
     }
 
 
+def _compute_vwma_from_kline(
+    engine, okx_symbol: str, period: int, end_date: datetime.date
+) -> dict[str, str]:
+    """Compute VWMA from KLine close and volume and return {date_str: vwma_value_str}."""
+    start_dt = end_date - datetime.timedelta(days=period * 2)
+    end_dt = end_date + datetime.timedelta(days=1)
+
+    with engine.connect() as conn:
+        result = conn.execute(
+            text("""
+                SELECT report_time, close, vol
+                FROM kline
+                WHERE symbol = :sym
+                  AND timeframe = '1D'
+                  AND report_time >= :start
+                  AND report_time < :end
+                ORDER BY report_time
+            """),
+            {
+                "sym": okx_symbol,
+                "start": start_dt.strftime("%Y-%m-%d"),
+                "end": end_dt.strftime("%Y-%m-%d"),
+            },
+        )
+        rows = result.fetchall()
+
+    if not rows:
+        return {}
+
+    df = pd.DataFrame(
+        [
+            (r.report_time.strftime("%Y-%m-%d"), float(r.close), float(r.vol or 0))
+            for r in rows
+        ],
+        columns=["date", "close", "vol"],
+    )
+    df["pv"] = df["close"] * df["vol"]
+    df["vwma"] = (
+        df["pv"].rolling(window=period, min_periods=period).sum()
+        / df["vol"].rolling(window=period, min_periods=period).sum()
+    )
+
+    return {
+        row["date"]: (f"{row['vwma']:.2f}" if pd.notna(row["vwma"]) else "N/A")
+        for _, row in df.iterrows()
+    }
+
+
 def get_okx_indicators(
     symbol: Annotated[str, "ticker symbol of the company"],
     indicator: Annotated[str, "technical indicator to get the analysis and report of"],
@@ -255,12 +303,17 @@ def get_okx_indicators(
     if not store.has_symbol(symbol):
         return f"OKX does not have data for {symbol}."
 
-    # Pre-compute SMA values from KLine when needed
+    # Pre-compute SMA/VWMA values from KLine when needed
     sma_by_date = {}
+    vwma_by_date = {}
     if indicator in ("close_50_sma", "close_200_sma"):
         period = 50 if indicator == "close_50_sma" else 200
         sma_by_date = _compute_sma_from_kline(
             store.engine, okx_symbol, period, curr_date_dt.date()
+        )
+    elif indicator == "vwma":
+        vwma_by_date = _compute_vwma_from_kline(
+            store.engine, okx_symbol, 20, curr_date_dt.date()
         )
 
     with store.engine.connect() as conn:
@@ -302,6 +355,8 @@ def get_okx_indicators(
 
         if indicator in ("close_50_sma", "close_200_sma"):
             val = sma_by_date.get(date_str, "N/A: Not a trading day (weekend or holiday)")
+        elif indicator == "vwma":
+            val = vwma_by_date.get(date_str, "N/A: Not a trading day (weekend or holiday)")
         else:
             row_for_date = rows_by_date.get(date_str)
             if row_for_date:
